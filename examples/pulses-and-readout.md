@@ -205,7 +205,7 @@ Long: fidelity to −iY = 0.988; leakage from |0⟩ = 4.3e-05
 
 <!-- executed-output:end -->
 
-The short pulse moves most of |0⟩ out of the qubit states, while the long
+The short pulse moves most of |0⟩ out of the qubit states. The long
 pulse leaks little, so most of its error is coherent. The drive also couples
 |1⟩ to |2⟩, which shifts the 0→1 transition during the pulse, and the result
 is a nearly π rotation with a tilted axis and a small angle error. The amplitude is a

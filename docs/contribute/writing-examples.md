@@ -88,7 +88,7 @@ A page is either Markdown with its printed output or a Jupyter notebook.
 
 Inspect the figures and run the focused example test and the documentation
 build. Validation executes the Markdown pages and the guide notebooks again
-and compares their printed output with the committed text, while the release suite
+and compares their printed output with the committed text, and the release suite
 does the same for the study notebooks. The
 {doc}`contributing guide <../contributing>` gives the execution and validation
 commands.

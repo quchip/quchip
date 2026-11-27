@@ -105,7 +105,7 @@ print(f"f01 = {f01:.4f} GHz, f12 = {f12:.4f} GHz, chi_Z = {1e3 * chi_z:.3f} MHz"
 f01 = 4.9980 GHz, f12 = 4.6986 GHz, chi_Z = 0.285 MHz
 ```
 
-`unresolved_hamiltonian()` keeps the local device and coupling expressions as you defined them, while `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
+`unresolved_hamiltonian()` keeps the local device and coupling expressions as you defined them, and `hamiltonian()` applies the chip's basis, frame, and approximation. Both return inspectable symbolic expressions. If a resolved expression is time-dependent and you need its numerical array, call `.matrix(t=...)`.
 
 The remaining calls read dressed transition frequencies and the resonator frequency conditioned on the qubit state. With quchip's $Z=|0\rangle\langle0|-|1\rangle\langle1|$, half the ground-minus-excited difference is the coefficient $\chi_Z$ of $Z\,n_r$.
 

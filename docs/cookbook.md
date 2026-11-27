@@ -84,7 +84,7 @@ the full space, and no excitation cutoff is inserted.
 is checked again after rebinding or tracing. Traced parameters of a local
 Hamiltonian that is not diagonal by construction, such as a
 `ChargeBasisTransmon`, give a traced energy basis. Conservation of an
-operator on that device without a defined structure is then unknown, so keep a
+operator on that device without a defined structure is then unknown. Keep a
 sufficient limit for the full fallback, or supply a valid structural operator
 definition.
 `evaluator="full"` retains the complete device model even when it uses sectors.
@@ -131,7 +131,7 @@ response timescale, and they do not provide a fit-error bound.
 
 This route rejects pumps, thermal inputs and stationary solver options.
 Use scheduled coherent inputs when the preparation, delay or acquisition
-window matters. `VNA.measure()` describes stationary measurements.
+window matters. `VNA.measure()` continues to describe stationary measurements.
 
 ## Read the resonances of a readout
 
@@ -170,7 +170,7 @@ constrained values, such as pulse duration and edge length, in the same call.
 Activate optional noise before JAX tracing, then vary its numerical values.
 `thermal_occupation` is the bath's mean occupation, not the qubit's initial
 excited-state probability. `set_noise()` replaces the complete noise
-configuration, so use `with_params()` for a partial change.
+configuration. Use `with_params()` for a partial change.
 
 For `FluxTunableTransmon`, sweep `flux_bias` to move along its calibrated
 frequency curve. Set `freq` and `flux_bias` together to change the calibration
@@ -199,11 +199,11 @@ batch = sequence.simulate_batch(
 )
 ```
 
-Separate sweep axes form a Cartesian grid, while `zip()` pairs values: here the
+Separate sweep axes form a Cartesian grid, and `zip()` pairs values. Here the
 two pulses have equal nominal area. Use `delay()` and `barrier()` for serial timing,
 and an explicit `start_time` for overlap.
 
-A scheduled carrier stays fixed when device parameters change, so use the
+A scheduled carrier stays fixed when device parameters change. Use the
 pulse's `freq` parameter to retune it. For independently built experiments, pass their
 `build_problem()` results to `solve_many()`.
 

@@ -31,7 +31,7 @@ Results keep the physical dimensions, and `result.stats["excitation_reduction"]`
 reports the dimensions and the proof or the fallback reason. Under
 `ExcitationCutoff(max_total=K)`, both backends evolve only the states with at
 most `K` excitations, an explicit approximation that the same record reports.
-QuTiP stores the operators of the compact space as CSR matrices, while dynamiqs
+QuTiP stores the operators of the compact space as CSR matrices. dynamiqs
 stores each one as a dense array of the compact dimension, and quchip raises
 `MemoryError` before it allocates an array that does not fit.
 The [model reduction guide](../guides/model-reduction.md#use-an-exact-excitation-space)
@@ -273,7 +273,7 @@ and [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 
 ## Explicit truncation diagnostics
 
-Simulation does not check cutoffs automatically, so call
+Simulation no longer checks cutoffs automatically, so call
 `check_truncation(result)` to inspect saved states. For reduced storage:
 
 ```python

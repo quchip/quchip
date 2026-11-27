@@ -1,6 +1,6 @@
 # Physics reference
 
-This document states quchip's physics: what each Hamiltonian method returns,
+This document defines quchip's physics conventions. It states what each Hamiltonian method returns,
 where quchip applies local bases, frames and the RWA, which
 approximations each workflow makes, and the conventions of its results.
 Docstrings, tests and code comments cite its sections by number. A change to
@@ -684,7 +684,7 @@ under `"rotating"`.
 A chip without a frame keeps its static calculations in the lab frame:
 `chip.resolve()`, `chip.hamiltonian()`, dressed analysis, and steady states.
 Its time-domain solves use `"rotating"` and warn with that choice. The
-rotating frame does not fit every chip, since some operators have bands with
+rotating frame does not fit every chip. Some operators have bands with
 different phases in it, for example the jump that an eliminated bus carries
 onto two transmons (§10.5), a collective decay of two detuned devices, and a
 port network that composes ports at different frequencies. A solve on such a
@@ -715,7 +715,7 @@ exchange-coupled devices one frequency, and `"lab"` needs no reference. A
 frequencies. A frame set on the chip, or passed as `frame=` to
 `build_problem()`, applies without a warning.
 
-A lab-frame solve must resolve the phase of
+The default was `"lab"` before. A lab-frame solve must resolve the phase of
 each device at its transition frequency. Take a transmon with `T1` and a
 five-level resonator, 15 states in total, driven by a 20 ns pulse and solved
 for 100 ns with automatic sampling. In the lab frame, the solve saved 124,057
@@ -869,7 +869,7 @@ new chip calculation resolves `None` to that chip's dressed transition and
 captures the value in its frame record. An explicit value fixes the frame and
 readout reference across model changes. When `f_ref` is off the dressed
 transition `f_01`, the demodulated `0 -> 1` coherence of an idle device turns
-as `exp(-i 2π Δ t)` with `Δ = f_01 - f_ref`, which is idle Ramsey precession.
+as `exp(-i 2π Δ t)` with `Δ = f_01 - f_ref`. This is idle Ramsey precession.
 The integration frame subtracts `f_frame n` from the Hamiltonian (§4.2), and
 demodulation removes the rest, `f_ref - f_frame` (§8). Under `"rotating"` the
 Hamiltonian takes all of `f_ref`, and under `"lab"` the demodulation does.
@@ -947,7 +947,7 @@ warns with the chosen carrier once per line in each sequence. Drives without a
 defined or inherited `carrier_harmonic`, such as flux and coupling drives, and
 coherent inputs keep a baseband pulse. `freq=None` gives a baseband pulse on
 every line: the envelope without carrier modulation, through the drive's
-own I/Q mapping. `freq=0.0` is a carrier at zero frequency, which follows its
+own I/Q mapping. `freq=0.0` is a carrier at zero frequency. It follows its
 frame: on a charge line its carrier phase `p`, from `phase=` and `vz()`,
 scales a real envelope by `cos p`, and `RWA()` keeps both of its partners
 (§6.2). The automatic carrier is evaluated when the pulse is scheduled. It
@@ -976,7 +976,7 @@ counter-rotating partner does not transform the same way, and transmon
 operators with higher excitation-number bands also break it. Drives without a
 defined `carrier_harmonic`, coherent inputs, and pulses in another device's
 frame keep the θ shift. Such a pulse can need more, for example a two-photon
-pump made by doubling another device's reference, so add the missing phase
+pump made by doubling another device's reference. Add the missing phase
 explicitly.
 
 A pulse's `detuning` δ offsets its carrier from `freq`, referenced to the pulse
@@ -1161,7 +1161,7 @@ elements, such as `m = i√2` for `1 -> 2`. The phase of `m` depends on the
 device kind. On an isolated `ChargeBasisTransmon`, whose charge operator and
 eigenvectors are real, `m` is real, and a real π pulse of positive amplitude
 gives `−i sgn(m) X`. When the phase changes during the pulse, as for DRAG with a nonzero `beta`, time ordering first contributes at
-second Magnus order, so the area alone does not set the gate. Detuning,
+second Magnus order, and the area alone then does not set the gate. Detuning,
 leakage to other levels and the counter-rotating terms of `Exact()` also change
 the rotation.
 
@@ -1826,13 +1826,13 @@ Intensity correlations and scalar noise power are invariant under the
 conversion.
 
 For eligible passive harmonic models, `measure()` uses the same compact
-mode-space form and backend response solver as `sweep()`. With response
+mode-space conversion and backend response solver as `sweep()`. With response
 matrix `T(f)` and input occupations `n`, the normal output spectrum at the
 Markov boundary is `T(f) diag(n) T(f)†`. Subtracting `S diag(n) S†` gives the
 device-generated excess to the shared downstream propagation, which adds the
 direct sources once. The result is the exact stationary Gaussian field
 solution, including thermal fluctuations, without a Fock-space truncation. All
-modes must decay: concrete acquisitions check stability, and traced paths
+modes must decay. Concrete acquisitions check stability, and traced paths
 keep the usual host-validation limit.
 
 Thermal collapse channels of devices, nonlinear or active terms, fixed pump
@@ -1893,7 +1893,7 @@ Physical source budgets separate directly propagated fields from
 `device.correlations`, which includes nonlinear response and interference and
 so is not necessarily positive or independently sampleable. A matched
 absorptive filter sets `thermal_occupation` and emits `(1-|H(f)|²)n` in
-each direction. A scalar `H(f)` without that occupation does not imply an
+each direction. A scalar `H(f)` without a `thermal_occupation` setting does not imply an
 absorptive thermal model.
 
 Colored emission can propagate to external outputs, but quchip rejects colored
@@ -1976,7 +1976,7 @@ not above the square root of the floating-point epsilon, the anchor is the
 first amplitude within a relative `1e-6` of the vector's largest magnitude.
 `Chip.state()`, the eigenstates and eigenvector matrix of `DressedResult`,
 dressed-basis operators, drive matrix elements, sector eigenvectors and label
-initial states use this convention. The convention is piecewise, so backend
+initial states use this convention. The convention is piecewise. Backend
 agreement and derivatives need resolved eigenvalue gaps, a locally constant
 assignment, and a stable anchor: an assigned amplitude that stays above the
 floor, or a fallback amplitude that stays the unique near-largest one. A phase
@@ -2051,7 +2051,7 @@ eigenvector the eigensolver returns.
 
 With ordinary couplings, the default RWA leaves the all-ground bare product
 unchanged. When the static model of the solve's approximation conserves `N`,
-the bare product is the only state with `N = 0`, so the solve starts from it
+the bare product is the only state with `N = 0`, and the solve then starts from it
 with no static model or eigensystem. Other models first apply the static
 Hamiltonian to the bare product and diagonalize only when it is not an
 eigenstate. Retained bands, effective terms, or network Hamiltonian terms that
@@ -2122,7 +2122,7 @@ describe Y quadratures, not non-Hermitian Hamiltonian terms, and a drive phase
 rotates the common quadrature. For a constant resonant tone, the ideal
 weak-drive ZX90 duration is `1/(4 |A C_Z/A|)` in ns.
 
-The calculation runs no pulse, so it excludes strong-drive Stark shifts,
+The calculation runs no pulse, and it excludes strong-drive Stark shifts,
 pulse-bandwidth leakage, and echo or cancellation calibration. The
 effective-Hamiltonian treatment follows [Magesan and Gambetta][magesan] and
 [Malekakhlagh et al.][malekakhlagh].
@@ -2393,7 +2393,7 @@ convergence.
 
 `analyze_dispersive_readout(chip, qubit, resonator, ...)` derives its inputs
 from the chip and evaluates closed-form steady-state figures of merit. It is a
-quick estimate from statics, while `IQReadout.from_wiring` models the full wiring
+quick estimate from statics, and `IQReadout.from_wiring` models the full wiring
 and receiver.
 
 The pulls come from the dressed spectrum of the chip's Hamiltonian
@@ -3582,7 +3582,7 @@ almost alike. With both knobs and a spectator in the block, the fit on two
 transmons 100 MHz apart moved to the detuning bound with `β ≈ ±10 ns`. For an
 X fit with `spectators="none"` next to a neighbor 100 MHz away with
 `g = 3 MHz`, scored with the neighbor in `|0>`, a 30 ns ±4σ pulse has
-`1 - F_avg = 1.5e-4`, mostly population left in the neighbor, while the defaults
+`1 - F_avg = 1.5e-4`, mostly population left in the neighbor. The defaults
 (40 ns, ±3σ) give `1.9e-6`.
 
 `cross_resonance()` drives the control at the target frequency. The seeds are

@@ -1,6 +1,6 @@
 # Extending quchip
 
-An extension defines local physics: quchip projects its operators into the
+An extension defines local physics, and quchip projects its operators into the
 resolved basis, embeds them in the chip Hilbert space, applies frames and RWA,
 and converts the result for the selected backend. Extension code returns
 quchip expressions and need not choose a numerical backend.
@@ -21,7 +21,7 @@ quchip expressions and need not choose a numerical backend.
 | Custom local space | `LocalSpace.matrix()` with an explicit operator vocabulary | | `SpinHalf` |
 | Third-party conversion | `ModelMapping.import_model()` and `ModelMapping.export_model()` | scqubits mappings | |
 
-The classes on this page are complete but quchip does not ship them, so copy
+The classes on this page are complete, but quchip does not ship them. Copy
 a class into your own code to use it. The quchip tests run the code on this page
 and check the physics of each class: analytical limits, serialization,
 projection, RWA, and JAX paths where each property applies.
@@ -197,7 +197,7 @@ Define drive values with `parameter()` and structural choices with
 `setting()`, and quchip generates the constructors and serialization. Define a
 scheduled waveform by subclassing `Envelope` and an unscheduled scalar
 coefficient by subclassing `TimeCoefficient`, and implement `value(t)` in
-both. Both implementations must use `quchip.qnp` to remain JAX-traceable. This half-sine pulse rises from zero to its peak at mid-pulse:
+both. Both implementations should use `quchip.qnp` to remain JAX-traceable. This half-sine pulse rises from zero to its peak at mid-pulse:
 
 ```python
 from quchip import Envelope, qnp
@@ -371,12 +371,12 @@ Default T1 and thermal channels use `lowering_operator()` and
 `raising_operator()`, and T2 uses `number_operator()`. Override those hooks to
 select your model's transitions and dephasing operator, or define the
 complete channels in `dissipation()`. Matrix-element normalization sets how a
-channel's rate relates to measured lifetimes, since quchip does not infer
+channel's rate relates to measured lifetimes. quchip does not infer
 selection rules or dipole strengths from energy levels. The energy-level index
 used by frames is separate from these physical operators.
 
 For an intrinsically finite model, override `truncation_boundary()` to return
-`None`. For a numerical cutoff, supply a `TruncationBoundary`: quchip reports
+`None`. For a numerical cutoff, supply a `TruncationBoundary`. quchip reports
 a custom cutoff without one as unavailable.
 
 Units remain GHz, ns and mK for every model: enter 1 MHz as `0.001` GHz and 1

@@ -111,7 +111,7 @@ do not.
 The `main` ruleset requires the PR branch to include the current `main`
 before merging. Its configuration is recorded in
 [`.github/rulesets/main.json`](.github/rulesets/main.json). A change to this
-file does not update GitHub automatically, so an administrator must apply it to
+file does not update GitHub automatically, and an administrator must apply it to
 ruleset `21738854` before merging the workflow changes that remove
 post-merge test runs. Existing PRs keep the required check names.
 
@@ -234,7 +234,7 @@ Before you tag, review the full change set since the previous published tag.
 Move `Unreleased` into the dated entry, and run
 `python tools/release_notes.py <version>` to inspect the release body. The docs
 include the changelog, and after the tag workflow publishes to PyPI it uses the
-same section for GitHub, so keep no separate copies.
+same section for GitHub. Do not keep separate copies.
 
 For editorial corrections after publication, merge the changelog update and
 regenerate the GitHub release body with the same command. Then verify both the

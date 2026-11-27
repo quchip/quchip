@@ -263,8 +263,8 @@ To keep a chosen set of devices, call `eliminate_spectators(chip, keep)`, which
 removes the spectators one `eliminate()` step at a time and returns every
 step. `active_patch()` uses the same default order, which here removes `q3`
 and then `q2`. When another spectator links a spectator to a kept device near
-it in frequency, the default order removes the linking spectator first, so the
-chain keeps the fourth-order exchange shift between the spectator and the
+it in frequency, the default order removes the linking spectator first, and the
+chain then keeps the fourth-order exchange shift between the spectator and the
 kept device. Under `local=True`, the order also limits how far the operators
 of the kept devices spread. Pass `order=` to either function to set the steps.
 A device that stays on the chip, such as a kept coupler, can link a removed
@@ -321,7 +321,7 @@ Largest population difference: 3.7e-06 (tolerance 5.9e-03)
 ## Remove a readout from its feedline
 
 `eliminate()` also removes readout resonators that couple to a feedline. A
-hanger emits into both directions of its line, so give each readout two ports
+hanger emits into both directions of its line. Give each readout two ports
 with half the external rate, and cascade the ports in opposite orders along
 the two directions. A one-way cascade gives an all-pass response in the
 lossless limit, so it does not describe the hanger notch.
@@ -512,7 +512,7 @@ Idle ring: 24 of 282429536481 states
 <!-- executed-output:end -->
 
 The charge drive on the chain changes the excitation number, so its solve
-uses the full product space, while the idle ring keeps its single excitation, and
+uses the full product space. The idle ring keeps its single excitation, and
 `stats["excitation_reduction"]` records the proof.
 
 In the one-excitation space, the RWA Hamiltonian is a 24 × 24 hopping matrix
@@ -545,8 +545,8 @@ Maximum population difference: 3.1e-13
 <!-- executed-output:end -->
 
 The solve diagonalizes the constant 24-state generator, so the difference is
-floating-point roundoff. Decay adds the vacuum to the space, so with T1
-on every transmon the master equation runs on 25 states:
+floating-point roundoff. Decay adds the vacuum to the space. With T1
+on every transmon, the master equation runs on 25 states:
 
 ```python
 lossy_ring = ring.with_params({f"q{index}.T1": 20_000.0 for index in range(ring_size)})

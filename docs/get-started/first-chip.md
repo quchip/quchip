@@ -95,7 +95,7 @@ Changed bare / dressed: 5.100 / 5.098685 GHz
 
 ## Inspect the Hamiltonian
 
-`unresolved_hamiltonian()` shows the Hamiltonian you defined, while `hamiltonian()` is the
+`unresolved_hamiltonian()` shows the Hamiltonian you defined, and `hamiltonian()` is the
 expression selected for simulation, after basis, frame, and RWA choices. Both show as
 equations in a notebook.
 

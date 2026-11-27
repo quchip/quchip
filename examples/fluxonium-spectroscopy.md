@@ -250,8 +250,8 @@ class FluxoniumReadoutCoupling(CouplingModel):
 ```
 
 Use the published interaction with the fitted circuit parameters, and keep
-every coupling band with `Exact()`, since counter-rotating terms contribute
-strongly to the fluxonium's dispersive shift: under `RWA()` the $\chi_Z$ RMSE
+every coupling band with `Exact()`. Counter-rotating terms contribute
+strongly to the fluxonium's dispersive shift, and under `RWA()` the $\chi_Z$ RMSE
 against the data increases from 0.77 MHz to 1.42 MHz.
 
 ```python
@@ -468,7 +468,7 @@ RESULT paper_statics={"chi_median_absolute_error_mhz":0.1767,"chi_rmse_mhz":0.76
 </details>
 
 The authors fitted the circuit parameters to these measurements, so use
-this result as a cross-implementation check of their static model, while a
+this result as a cross-implementation check of their static model. A
 fabrication-level prediction needs independent circuit parameters.
 
 ## Fit measured spectroscopy
@@ -700,7 +700,7 @@ RESULT experimental_statics={"fit_success":true,"holdout_median_absolute_error_m
 </details>
 
 The recovered circuit energies are within $0.6\%$ of the authors' values.
-The few large spectroscopy residuals stay in the holdout RMSE, while the
+The few large spectroscopy residuals stay in the holdout RMSE, and the
 median error is $0.88$ MHz. This section fits the isolated fluxonium
 spectrum, while the paper's full fit also included the coupled readout
 resonator.

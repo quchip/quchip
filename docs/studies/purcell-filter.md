@@ -307,7 +307,7 @@ np.testing.assert_allclose(linewidths[1], linewidths[0], rtol=0.05)
 The loaded linewidth is 1.033 MHz without the filter and 1.051 MHz with it,
 within the broad-filter estimate's 5% design tolerance. A `network.filter()`
 applies a transfer function to the signal path and cannot give this T1
-protection, since that protection needs a coupled resonator in the quantum
+protection. That protection needs a coupled resonator in the quantum
 model, which changes the decay channels.
 
 To remove a readout from its feedline and keep its weak-probe response, see

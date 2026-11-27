@@ -322,7 +322,7 @@ r3: 6.60078 GHz, kappa/2pi = 15.28 MHz
 The bus and the other resonators pull r1 down by 1.0 MHz and r3 up by
 0.8 MHz. The linewidths are 1–4% above the nominal 17.8, 10.7, and 14.8 MHz.
 Each nominal value adds the internal loss to the second-order external rate
-of the formula above, for one resonator alone, while the poles include the
+of the formula above, for one resonator alone. The poles include the
 couplings to all orders and the exchange through the shared bus.
 
 <details>

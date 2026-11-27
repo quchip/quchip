@@ -4,7 +4,7 @@ orphan: true
 
 # SQA 2026 examples
 
-The talk showed five short calculations. Each one is part of a page that
+The talk showed five short calculations. Each one is now part of a page that
 runs it in full, with its output and checks.
 
 - Your first chip: define a transmon and a resonator and read their

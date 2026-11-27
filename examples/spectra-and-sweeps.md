@@ -84,7 +84,7 @@ sweep_result = SpectrumSweep(
 ).run(progress=False)
 ```
 
-Subtract the ground energy from the two qubit-like branches, while the
+Subtract the ground energy from the two qubit-like branches. The
 bus-like excitation stays above this frequency window.
 
 ```python
@@ -190,8 +190,8 @@ The bare frequencies cross while the dressed transitions retain a finite
 splitting. The assignment weight exposes the hybridized region directly.
 ```
 
-The dashed lines are the bare frequencies, while red follows the
-more $q_1$-like dressed transition and black the more $q_2$-like one. At the
+The dashed lines are the bare frequencies. Red follows the
+more $q_1$-like dressed transition, and black the more $q_2$-like one. At the
 crossing, the branch separation is $2J\approx4.0$ MHz. Second-order
 dispersive perturbation theory gives $4.0$ MHz, and the two agree to 0.3%. The
 RWA drops the counter-rotating coupling bands, and with `Exact()` their
@@ -203,7 +203,7 @@ hybridize.
 
 ## Inspect the model after the sweep
 
-The defined frequencies are inputs, while `chip.freq()` returns dressed
+The defined frequencies are inputs. `chip.freq()` returns dressed
 $0\rightarrow1$ transitions, and `chip.static_zz()` returns the
 conditional two-qubit shift for this coupled model.
 
@@ -325,7 +325,7 @@ Dressed q2 of shifted_chip: 5.397877 GHz
 ## Independent and linked parameter studies
 
 `Sweep.expand()` shows the parameter dictionaries before a calculation starts.
-Independent axes form a Cartesian grid, while `Sweep.zip()` pairs the values
+Independent axes form a Cartesian grid, and `Sweep.zip()` pairs the values
 of parameters that must move together.
 
 ```python

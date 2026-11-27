@@ -26,8 +26,7 @@ and the ensemble density from the same dispersive-readout model.
 
 [Murch et al. (2013)](https://doi.org/10.1038/nature12539) tracked conditional
 superconducting-qubit states and checked them with tomography on repeated
-preparations. Here we simulate ideal detection and no intrinsic qubit decay, so
-the figures show those measurement dynamics but do not fit the experiment's
+preparations. Here we simulate ideal detection and no intrinsic qubit decay. The figures show those measurement dynamics but do not fit the experiment's
 finite-efficiency data or perform an experimental tomography validation.
 
 ## Set the measurement strength from the resonator
@@ -93,8 +92,8 @@ so it omits the initial cavity transient.
 
 ## Monitor the qubit
 
-Give the qubit its transition frequency and set the chip to its rotating frame, which
-removes free precession so that only the measurement backaction stays. `T1=None` omits
+Give the qubit its transition frequency and set the chip to its rotating frame. This frame
+removes free precession, and only the measurement backaction stays. `T1=None` omits
 relaxation, and `T2=1/gamma` represents the measurement-induced dephasing, with no
 additional unobserved dephasing. The effective frequency includes the steady Stark shift.
 
@@ -330,7 +329,7 @@ $x_\mathrm{opt}(t)=\sqrt{1-z_\mathrm{opt}(t)^2}$. The paper's measurement time i
 $\tau=1/(2\Gamma_m)$ in our convention.
 
 Select $z(1000\,\mathrm{ns})=0.8\pm0.03$ from the existing ensemble. The
-dashed curve is the analytic most-likely path, while the solid curve is the
+dashed curve is the analytic most-likely path, and the solid curve is the
 selected paths' mean, which is a different statistic. This no-drive result
 needs no optimizer or additional solve.
 
@@ -395,7 +394,7 @@ plt.show()
 </video>
 
 The 160 bins show raw counts with no smoothing or interpolation. We divide each time column by its
-own maximum to show where paths concentrate, so the shades cannot compare absolute probabilities
+own maximum to show where paths concentrate. The shades cannot compare absolute probabilities
 between columns or panels. The endpoint window gives a finite subensemble around the analytic
 path's exact boundary condition.
 
@@ -457,7 +456,7 @@ for name in (*history_figures, "density"):
 If you discard the measurement record, you get
 $\langle x\rangle=e^{-\Gamma_m t}$ and $\langle z\rangle=0$. The final excited
 and ground populations average to one half. For observables bounded by
-$[-1,1]$, $1/\sqrt{N}$ bounds the standard error at any time, so report the
+$[-1,1]$, $1/\sqrt{N}$ bounds the standard error at any time. Report the
 largest discrepancy together with that scale. Refine the integration timestep
 when you study finer trajectory features.
 
@@ -481,8 +480,7 @@ Max Bloch-radius error: 6.03e-04
 
 `paths-plus-z.npz` contains the `(shot, time, 3)` Bloch array and the values
 of time, measurement rate, photon number, and drive amplitude. The fixed seed
-and native method reproduce the ensemble with the same QuTiP version, although
-parallel workers can return the shots in a different order.
+and native method reproduce the ensemble with the same QuTiP version. Parallel workers can return the shots in a different order.
 
 For the experimental reconstruction and the path equations, see
 [Murch et al., Nature 502, 211 (2013)](https://arxiv.org/abs/1305.7270) and
