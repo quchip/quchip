@@ -25,6 +25,18 @@ gates.calibrate()
 print(gates.describe())
 ```
 
+Output:
+
+```text
+GateSet on q0, q1; solver rotating frame, product space
+    gate       qubits      ns  1 - F_avg   leakage  status
+      SX           q0    40.0   3.02e-05   9.5e-08  ok
+       X           q0    40.0   7.02e-06   5.0e-07  ok
+      SX           q1    40.0   3.01e-05   9.4e-08  ok
+       X           q1    40.0   7.84e-06   5.0e-07  ok
+    ZX90        q0,q1   480.0   4.97e-05   3.6e-07  ok
+```
+
 Each calibration reports the average gate infidelity, the leakage, the fitted
 knobs, the generator of the error after the ideal gate, and a status. A status other than `"ok"` comes with
 a warning:
@@ -115,10 +127,19 @@ sequence.
 ```python
 circuit = [("H", "q0"), ("CX", ("q0", "q1"))]
 result = gates.unitary(circuit)
-print(result.fidelity(), result.leakage)
+print(f"Circuit fidelity: {float(result.fidelity()):.5f}")
+print(f"Largest leakage: {max(float(value) for value in result.leakage):.1e}")
 
 run = gates.simulate(circuit, "00")
-print(run.probabilities)
+print({state: round(float(probability), 4) for state, probability in run.probabilities.items()})
+```
+
+Output:
+
+```text
+Circuit fidelity: 0.99983
+Largest leakage: 9.9e-07
+{'00': 0.5056, '01': 0.0001, '10': 0.0001, '11': 0.4943}
 ```
 
 `unitary()` composes cached gate propagators, so a long circuit costs a few

@@ -17,6 +17,8 @@ jupyter:
 
 # What happens during a qubit measurement?
 
+<!-- notebook-download -->
+
 A qubit starts in $|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}$. When we monitor
 $\sigma_z$, some trajectories go quickly toward a pole, while others wander
 or reverse direction before they settle. Generate these individual histories
@@ -24,8 +26,7 @@ and the ensemble density from the same dispersive-readout model.
 
 [Murch et al. (2013)](https://doi.org/10.1038/nature12539) tracked conditional
 superconducting-qubit states and checked them with tomography on repeated
-preparations. Here we simulate ideal detection and no intrinsic qubit decay. The
-figures show those measurement dynamics. They do not fit the experiment's
+preparations. Here we simulate ideal detection and no intrinsic qubit decay. The figures show those measurement dynamics but do not fit the experiment's
 finite-efficiency data or perform an experimental tomography validation.
 
 ## Set the measurement strength from the resonator
@@ -34,7 +35,7 @@ The resonator has a 20 MHz linewidth and a full conditional frequency pull of
 $-4$ MHz. Drive halfway between its two conditional resonances, then compare
 the steady fields for the qubit in $|0\rangle$ and $|1\rangle$. Apply a 400 ns
 square readout pulse to the coupled qubit and resonator, once from each qubit
-basis state. The final cavity fields set the measurement rate.
+basis state, and the final cavity fields set the measurement rate.
 
 ```python
 import numpy as np
@@ -85,16 +86,16 @@ which $L=\sqrt{\Gamma_m/2}\,\sigma_z$ represents. Then
 $\mathcal D[L]\rho=(\Gamma_m/2)(\sigma_z\rho\sigma_z-\rho)$, and the
 unconditional coherence decays as $e^{-\Gamma_m t}$. Here `gamma` means
 $\Gamma_m$, in $\mathrm{ns}^{-1}$. The cavity settles on a scale
-$2/\kappa\approx16$ ns, much shorter than $1/\Gamma_m$. The reduced model starts
-with the field already settled and tracks out the deterministic Stark rotation,
+$2/\kappa\approx16$ ns, much shorter than $1/\Gamma_m$, and the reduced model
+starts with the field already settled and tracks out the deterministic Stark rotation,
 so it omits the initial cavity transient.
 
 ## Monitor the qubit
 
-Give the qubit its transition frequency and set the chip to its rotating frame. This
-frame removes free precession, and only the measurement backaction stays. `T1=None` omits
-relaxation. `T2=1/gamma` represents the measurement-induced dephasing, with no additional
-unobserved dephasing. The effective frequency includes the steady Stark shift.
+Give the qubit its transition frequency and set the chip to its rotating frame. This frame
+removes free precession, and only the measurement backaction stays. `T1=None` omits
+relaxation, and `T2=1/gamma` represents the measurement-induced dephasing, with no
+additional unobserved dephasing. The effective frequency includes the steady Stark shift.
 
 The standard channel is $L=\sqrt{2\Gamma_m}\,n$, with $n=(I-\sigma_z)/2$. Its
 dissipator equals the Pauli form above. A homodyne phase of $\pi$ matches the
@@ -123,10 +124,7 @@ problem = QuantumSequence(chip).build_problem(
 channel = problem.engine_result.slh.channels[0]
 result = chip.solve(with_monitoring(problem, {channel.key: 1.0}, phases={channel.key: np.pi}))
 
-bloch = np.empty((shots, len(t), 3))
-for i in range(shots):
-    trajectory = result.run(i)
-    bloch[i] = np.column_stack([trajectory.expect(meter, k).real for k in range(3)])
+bloch = np.stack([np.asarray(result.run_expect(meter, k)).real for k in range(3)], axis=-1)
 
 np.savez_compressed(
     "paths-plus-z.npz", bloch=bloch.astype(np.float32), t=t,
@@ -146,11 +144,13 @@ Bloch data: (3000, 201, 3); final |z| > 0.95: 0.748
 
 <!-- executed-output:end -->
 
-`paths-plus-z.npz` saves the array with axes `(shot, saved time, x/y/z)`. The file does not keep the
-states, because these three observables contain the qubit information used here. `dt=0.05` ns sets
-the native integration step, and the 5 ns save interval only sets the plot sampling. QuTiP runs the
-seeded trajectories across four worker processes, and the loop above only extracts their
-observables. The 3,000-shot ensemble includes the four histories shown below.
+`dt=0.05` ns sets the native integration step, and the 5 ns save interval only
+sets the plot sampling. QuTiP runs the seeded trajectories across four worker
+processes. `run_expect()` reads one observable of every run as an array with
+axes `(shot, saved time)`, and `paths-plus-z.npz` saves the stacked array with
+axes `(shot, saved time, x/y/z)` but not the states, because these three
+observables contain the qubit information used here. The 3,000-shot
+ensemble includes the four histories shown below.
 
 ## Compare individual histories
 
@@ -168,10 +168,15 @@ $\sigma_z$ eigenstate is stationary under this measurement.
 
 ```python
 import shutil
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, Circle, FancyArrowPatch
 
-plt.style.use("../docs/_static/quchip.mplstyle")
+# In a quchip checkout, use the documentation style and save the figures there.
+docs = Path("../docs")
+if docs.is_dir():
+    plt.style.use(docs / "_static/quchip.mplstyle")
 plt.rcParams["text.usetex"] = bool(shutil.which("latex"))
 
 z = bloch[:, :, 2]
@@ -250,7 +255,8 @@ for kind, indices in selected.items():
     trace.scatter([0], [0], s=26, facecolor="white", edgecolor="#16181C", zorder=20, clip_on=False)
     cursor = trace.axvline(t[-1], color="#9AA0A8", lw=1.1, ls=(0, (4, 4)), visible=False)
     history_figures[name] = (fig, artists, cursor)
-    fig.savefig(f"../docs/images/measurement_{name}.svg")
+    if docs.is_dir():
+        fig.savefig(docs / f"images/measurement_{name}.svg")
     plt.show()
 ```
 
@@ -323,7 +329,7 @@ $x_\mathrm{opt}(t)=\sqrt{1-z_\mathrm{opt}(t)^2}$. The paper's measurement time i
 $\tau=1/(2\Gamma_m)$ in our convention.
 
 Select $z(1000\,\mathrm{ns})=0.8\pm0.03$ from the existing ensemble. The
-dashed curve is the analytic most-likely path. The solid curve is the
+dashed curve is the analytic most-likely path, and the solid curve is the
 selected paths' mean, which is a different statistic. This no-drive result
 needs no optimizer or additional solve.
 
@@ -373,7 +379,8 @@ optimal_line, = axes[1].plot(t, optimal, color="#C92F33", ls="--", lw=1.6, label
 axes[1].legend(loc="lower right", fontsize=8, frameon=True, framealpha=1,
                facecolor="#FFFFFF", edgecolor="#E7EAEE")
 density_fig.colorbar(image, ax=axes, label="Density / column peak", fraction=0.035, pad=0.02)
-density_fig.savefig("../docs/images/measurement_density.svg")
+if docs.is_dir():
+    density_fig.savefig(docs / "images/measurement_density.svg")
 plt.show()
 ```
 
@@ -409,6 +416,7 @@ Final frame. [PDF](../images/measurement_density.pdf)
 from matplotlib.animation import FFMpegWriter
 from IPython.display import Video, display
 
+video_folder = docs / "_static" if docs.is_dir() else Path()
 frames = np.r_[np.linspace(0, len(t) - 1, 240).astype(int), np.full(45, len(t) - 1)]
 writer_options = {"fps": 30, "codec": "h264",
                   "extra_args": ["-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]}
@@ -416,7 +424,7 @@ writer_options = {"fps": 30, "codec": "h264",
 # Eight seconds of motion followed by a 1.5-second hold, as in the readout clips.
 for name, (fig, artists, cursor) in history_figures.items():
     writer = FFMpegWriter(**writer_options)
-    with writer.saving(fig, f"../docs/_static/measurement_{name}.mp4", dpi=200):
+    with writer.saving(fig, video_folder / f"measurement_{name}.mp4", dpi=200):
         for j in frames:
             for i, arrow, line, dot in artists:
                 arrow.set_positions((0, 0), bloch[i, j, [0, 2]])
@@ -427,7 +435,7 @@ for name, (fig, artists, cursor) in history_figures.items():
             writer.grab_frame(facecolor="white")
 
 writer = FFMpegWriter(**writer_options)
-with writer.saving(density_fig, "../docs/_static/measurement_density.mp4", dpi=200):
+with writer.saving(density_fig, video_folder / "measurement_density.mp4", dpi=200):
     for j in frames:
         for image, density in density_images:
             revealed = density.copy()
@@ -438,7 +446,7 @@ with writer.saving(density_fig, "../docs/_static/measurement_density.mp4", dpi=2
         writer.grab_frame(facecolor="white")
 
 for name in (*history_figures, "density"):
-    display(Video(f"../docs/_static/measurement_{name}.mp4", embed=False))
+    display(Video(str(video_folder / f"measurement_{name}.mp4"), embed=False))
 ```
 
 </details>
@@ -472,8 +480,7 @@ Max Bloch-radius error: 6.03e-04
 
 `paths-plus-z.npz` contains the `(shot, time, 3)` Bloch array and the values
 of time, measurement rate, photon number, and drive amplitude. The fixed seed
-and native method reproduce the ensemble with the same QuTiP version. Parallel
-workers can return the shots in a different order.
+and native method reproduce the ensemble with the same QuTiP version. Parallel workers can return the shots in a different order.
 
 For the experimental reconstruction and the path equations, see
 [Murch et al., Nature 502, 211 (2013)](https://arxiv.org/abs/1305.7270) and

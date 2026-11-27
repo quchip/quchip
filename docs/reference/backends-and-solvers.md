@@ -1,7 +1,7 @@
 # Backends and solvers
 
 QuTiP is the default backend. Use dynamiqs for JAX gradients, compiled batches,
-or accelerator execution. Both solve the declared model with its frame,
+or accelerator execution. Both solve the model as defined, with its frame,
 approximation, controls, and loss channels.
 
 ## Choose a backend and equation
@@ -12,10 +12,9 @@ result = sequence.simulate(duration=100.0, backend="qutip")
 ```
 
 Install `quchip[dynamiqs]` and set `backend="dynamiqs"` on the chip or solve.
-Traced Hamiltonian values, operator arrays, port parameters, and pulse coefficients
-cannot be lowered to QuTiP.
-You can bind traced parameters on a QuTiP chip, then call
-`simulate(backend="dynamiqs")`.
+quchip cannot convert traced Hamiltonian values, operator arrays, port parameters, and
+pulse coefficients to QuTiP objects, but you can bind traced parameters on a QuTiP chip
+and then call `simulate(backend="dynamiqs")`.
 
 | Request | Automatic equation |
 |---|---|
@@ -26,9 +25,22 @@ Leave `solver` unset for this selection, because an explicit `solver="sesolve"`
 rejects collapse channels and density matrices. Use `dissipation=False` for an
 intentional Hamiltonian-only calculation.
 
+Both backends evolve a deterministic solve in an invariant excitation space
+when quchip can prove one from the initial state and the retained operators.
+Results keep the physical dimensions, and `result.stats["excitation_reduction"]`
+reports the dimensions and the proof or the fallback reason. Under
+`ExcitationCutoff(max_total=K)`, both backends evolve only the states with at
+most `K` excitations, an explicit approximation that the same record reports.
+QuTiP stores the operators of the compact space as CSR matrices. dynamiqs
+stores each one as a dense array of the compact dimension, and quchip raises
+`MemoryError` before it allocates an array that does not fit.
+The [model reduction guide](../guides/model-reduction.md#use-an-exact-excitation-space)
+solves a 24-transmon ring in its exact space and compares a cutoff with the
+full solve.
+
 ## Time grid, stepping, and saved states
 
-Omit `tlist` for a pulse-aware grid. Use `duration` to include an idle interval.
+Omit `tlist` for a pulse-aware grid, and use `duration` to include an idle interval.
 An explicit `tlist` goes to the solver and defines the initial and final times,
 while adaptive methods choose internal steps separately.
 
@@ -42,8 +54,8 @@ result = sequence.simulate(
 
 `states="all"` keeps the history, `"final"` keeps only the final state, and
 `"none"` keeps neither. Requested observables remain available in all
-cases. Post-solve state and collapse-flux queries need the applicable saved
-states.
+cases. State and collapse-flux calculations after the solve need the saved
+states that they use.
 
 ## QuTiP integration
 
@@ -68,7 +80,7 @@ integration. `diag` cannot be combined with adaptive tolerances or step
 controls.
 
 `rtol` and `atol` set error tolerances, `max_step` caps an internal step in ns,
-and `nsteps` caps the step count. quchip supplies pulse-aware step limits. An
+and `nsteps` caps the step count. quchip supplies pulse-aware step limits, and an
 explicit `max_step` or `nsteps` overrides the corresponding limit.
 `result.stats["options"]` records the effective settings.
 
@@ -115,8 +127,8 @@ calls can reuse that compilation.
 
 `simulate_batch()` groups compatible problems. QuTiP distributes larger batches
 across worker processes, and dynamiqs vectorizes homogeneous batches. Numerical
-failure raises with the original point index and parameter values when available.
-A failed batch does not return partial results.
+failure raises with the original point index and parameter values when available,
+and a failed batch does not return partial results.
 
 A large QuTiP master equation splits each sparse product over up to four
 threads. `QUCHIP_NUM_THREADS` sets the count, and `OMP_NUM_THREADS` applies when
@@ -139,28 +151,28 @@ state raises outside tracing and becomes `NaN` inside `jax.jit`.
 Solver options always select this backend solve. Without them, an undriven chip
 that conserves the total excitation and has more than 64 product states
 returns its vacuum when the lowering channels prove it unique.
-`result.diagnostics["route"]` names the route and the reason for it.
+`result.diagnostics["route"]` names the route and the reason for it. On a
+chip with an `ExcitationCutoff`, `steadystate()` solves the truncated model.
 
 Inspect `residual`, `trace_error`, and `positivity_error`. By default, dense
 QuTiP nullity and condition-number diagnostics are calculated only up to
 Hilbert dimension 16. Adjust `diagnostic_max_dimension` as needed.
 
 Before trusting a result, compare the observable at tighter tolerances and
-larger local spaces. The [differentiability guide](differentiability.md)
-checks gradients. The [readout guide](steady-state-and-vna.md) checks
+larger local spaces. The [gradients guide](../guides/gradients-and-fitting.md)
+checks gradients. The [readout guide](../guides/steady-state-and-vna.md) checks
 stationary and transient field responses.
-
 
 ## Native stochastic trajectories
 
-| Physics | QuTiP | Dynamiqs |
+| Physics | QuTiP | dynamiqs |
 |---|---|---|
 | Quantum jumps | `mcsolve` | `jssesolve` |
 | Diffusive pure states | `ssesolve` | `dssesolve` |
 | Diffusive density matrices | `smesolve` | `dsmesolve` |
 
 Use the native name in `solver`. `run_args` forwards native call keywords, and
-`options` contains the native integrator options. For stochastic Dynamiqs calls,
+`options` contains the native integrator options. For stochastic dynamiqs calls,
 `options` holds native solver keywords: `save_states`, `cartesian_batching` and
 `save_extra`. For `jssesolve`, `options` also takes `t0` and `nmaxclick`. Put `method`
 and `gradient` in `run_args`. Required native arguments remain required. quchip
@@ -176,23 +188,23 @@ result = sequence.simulate(
 
 Omit `states` to keep native stochastic storage defaults. Explicit `states`
 translates to native state-storage flags and rejects conflicting storage options.
-Dynamiqs keeps a final state, accessible through `result.native`, even with
-`save_states=False`. QuTiP per-run views need `keep_runs_results=True`.
+dynamiqs keeps a final state, accessible through `result.native`, even with
+`save_states=False`. QuTiP per-run results need `keep_runs_results=True`.
 
 `result.native` exposes native keys/seeds, weights, stopping statistics, click
 buffers, and measurement records. `result.expect(key)` gives the native ensemble
 expectation with shape `(time,)`. `result.average()` gives a standard quchip
-analysis view using native weights. `result.run(i)` analyzes one kept run. Native
-QuTiP `runs_expect` has axes `(observable, run, time)`, and Dynamiqs `expects`
+analysis result that uses the native weights. `result.run(i)` analyzes one kept run. Native
+QuTiP `runs_expect` has axes `(observable, run, time)`, and dynamiqs `expects`
 has axes `(run, observable, time)`. Native saved states keep their library's
-layout. Access conditional states and observables through a run view.
+layout. Access conditional states and observables through `result.run(i)`.
 
 `result.records()`, `result.clicks()` and `result.run_expect(key)` read these
 native fields in one layout on both backends. `records().values` has shape
 `(runs, channels, intervals)`, and a QuTiP heterodyne solve adds a quadrature
 axis of length 2 before the intervals. `records().sampling` names the native
 signal sample of each interval: `"start"`, `"middle"` or `"end"` in QuTiP, as
-`store_measurement` selects, and `"mean"` in Dynamiqs. `clicks()` gives the
+`store_measurement` selects, and `"mean"` in dynamiqs. `clicks()` gives the
 click times and channels of each run with its sampling weight, and the weight
 of a no-click run that the native sampling solves apart. `run_expect(key)` has
 shape `(runs, time)`, and row `i` equals `result.run(i).expect(key)`.
@@ -212,64 +224,65 @@ result = chip.solve(with_monitoring(problem, {channel.key: 0.5}))
 
 Select resolved physical channels explicitly, because unselected channels remain
 losses. For pure-state SSE, every loss must be monitored at unit efficiency.
-Phases are measured relative to the integration frame and keep authored coupling
-phases. Arbitrary operators use the existing `CollapseChannel` declarations.
+Phases are measured relative to the integration frame and keep the coupling
+phases as defined. Arbitrary operators use the existing `CollapseChannel` definitions.
 Identical operators with different channel keys remain separate measurements.
 QuTiP's `heterodyne` keyword passes through `run_args`. For an explicit
-two-channel heterodyne construction, declare `L/sqrt(2)` and `-1j*L/sqrt(2)` at
+two-channel heterodyne construction, define `L/sqrt(2)` and `-1j*L/sqrt(2)` at
 the same rate, so their summed dissipator equals `D[L]`.
 
 Records describe the selected input-free coupling operators `L` in the integration
 frame. A coherent incident field already drives the captured Hamiltonian, and the
 native record does not add its known offset `beta`. The physical outgoing field
 `b_out = beta + L` and downstream receiver processing need explicit analysis. An
-identity offset authored inside a monitored operator is kept.
+identity offset defined inside a monitored operator is kept.
 
 Records keep native normalization and intervals. QuTiP's selected start, middle
-or end sampling and Dynamiqs interval-averaged currents are not interchangeable. Refine
+or end sampling and dynamiqs interval-averaged currents are not interchangeable. Refine
 the native timestep to check discretization and norm/positivity errors. Native
 advanced jump-sampling averages include the no-click contribution, so an
 unweighted mean of the kept jump paths does not reproduce them.
 
-Dynamiqs 0.3.6 `Event` can exhaust `nmaxclick` before the evolution completes. The
-raw result remains accessible, but quchip analysis views reject the incomplete
+dynamiqs 0.3.6 `Event` can exhaust `nmaxclick` before the evolution completes. The
+raw result remains accessible, but quchip's analysis methods reject the incomplete
 evolution. Increase the buffer and rerun. Fixed-step click buffers can truncate
 records without truncating the state evolution. Check saturation before
 interpreting event counts. `clicks().full` marks the runs that filled the buffer.
 
 Parameter batches assign noise before grouping. Omitted QuTiP seeds are independent
 and captured in each built point, while explicit seeds are kept for correlated
-comparisons. Shared Dynamiqs `keys` of shape `(runs,)` (typed keys) are folded with
+comparisons. Shared dynamiqs `keys` of shape `(runs,)` (typed keys) are folded with
 the logical point index. Supply shape `(points, runs)` to keep explicit key sets,
 including repeated sets. Legacy uint32 keys have a trailing dimension of two.
 `solve_many([problem, ...])` keeps each point's explicit keys. Solving a built
 batch point alone replays its assigned noise and skips quantum partitioning.
 
-Validated native contracts use QuTiP 5.2.3 and Dynamiqs 0.3.6; CI also checks QuTiP
-5.3.0. Dynamiqs diffusive SSE supports outer JIT with a static tuple time grid. Its
-fixed-noise Euler pathwise derivative is checked against a central finite
-difference, which is not an unbiased ensemble-gradient claim for jump events.
-Dynamiqs SME supports eager execution. Outer vmap with shared concrete efficiencies
-and times, and the lack of full SME JIT, were last checked on Dynamiqs 0.3.4.
+The native behavior above is validated with QuTiP 5.2.3 and dynamiqs 0.3.6. CI runs QuTiP 5.3.0
+with dynamiqs 0.3.6 and 0.3.7. dynamiqs diffusive SSE supports outer JIT with a
+static tuple time grid. Its fixed-noise Euler pathwise derivative is checked
+against a central finite difference, which is not an unbiased ensemble-gradient
+claim for jump events.
+dynamiqs SME supports eager execution. Outer vmap with shared concrete efficiencies
+and times, and the lack of full SME JIT, were last checked on dynamiqs 0.3.4.
 Different efficiencies use separate `solve_many` groups. Its public tuple-time and
 outer-JIT validation limitations are kept. No solver replacement is used.
 
 See [QuTiP Monte Carlo](https://qutip.readthedocs.io/en/stable/guide/dynamics/dynamics-monte.html),
-[Dynamiqs stochastic solvers](https://www.dynamiqs.org/stable/python_api/integrators/dsmesolve.html),
+[dynamiqs stochastic solvers](https://www.dynamiqs.org/stable/python_api/integrators/dsmesolve.html),
 and [Wiseman and Milburn, chapter 4](https://doi.org/10.1017/CBO9780511813948).
 
 ## Explicit truncation diagnostics
 
 Simulation no longer checks cutoffs automatically, so call
-`result.check_truncation()` to inspect saved states. For reduced storage:
+`check_truncation(result)` to inspect saved states. For reduced storage:
 
 ```python
-from quchip import with_truncation
+from quchip import check_truncation, with_truncation
 
 problem = sequence.build_problem(times, states="none")
 result = chip.solve(with_truncation(problem))
 
-maximum = result.check_truncation()
+maximum = check_truncation(result)
 ```
 
 The helper also accepts a built batch. It collects cutoff observables on the

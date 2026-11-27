@@ -18,13 +18,18 @@ import nbformat
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PAIRS = (
-    "00_hello_chip",
-    "01_resolve_and_sweep",
-    "02_reduce_and_replay",
-    "03_differentiate_a_driven_chip",
-    "04_continuous_measurement",
+GUIDE_PAIRS = (
+    "spectra-and-sweeps",
+    "pulses-and-readout",
+    "model-reduction",
+    "gradients-and-fitting",
 )
+STUDY_PAIRS = (
+    "fluxonium-spectroscopy",
+    "resonator-depletion",
+    "continuous-measurement",
+)
+DEFAULT_PAIRS = GUIDE_PAIRS + STUDY_PAIRS
 OUTPUT_START = "<!-- executed-output:start -->"
 OUTPUT_END = "<!-- executed-output:end -->"
 OUTPUT_RE = re.compile(
@@ -74,8 +79,22 @@ def _render_output(output: dict[str, Any]) -> str | None:
     return _fenced_text(plain) if plain.strip() else None
 
 
-def _render_cell_outputs(cell: dict[str, Any]) -> str:
-    rendered = [part for output in cell.get("outputs", ()) if (part := _render_output(output))]
+def _joined_streams(outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join consecutive stream outputs, which the kernel splits wherever it flushes."""
+    joined: list[dict[str, Any]] = []
+    for output in outputs:
+        previous = joined[-1] if joined else {}
+        if (output.get("output_type") == previous.get("output_type") == "stream"
+                and output.get("name") == previous.get("name")):
+            joined[-1] = {**previous, "text": _text(previous.get("text", "")) + _text(output.get("text", ""))}
+        else:
+            joined.append(output)
+    return joined
+
+
+def render_cell_outputs(cell: dict[str, Any]) -> str:
+    outputs = _joined_streams(list(cell.get("outputs", ())))
+    rendered = [part for output in outputs if (part := _render_output(output))]
     if not rendered:
         return ""
     body = "\n\n".join(rendered)
@@ -116,7 +135,7 @@ def synchronized_markdown(markdown_path: Path, notebook_path: Path) -> str:
                     f"{markdown_path}: plotted output after code block {index} must be "
                     "saved by that cell and shown with a figure directive"
                 )
-        additions.append((match.end(), _render_cell_outputs(cell)))
+        additions.append((match.end(), render_cell_outputs(cell)))
 
     for offset, addition in reversed(additions):
         source = source[:offset] + addition + source[offset:]

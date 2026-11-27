@@ -96,4 +96,4 @@ f01 = 5.000000 GHz, alpha = -0.249999 GHz
 A chip exports to a `HilbertSpace` with its supported couplings. The export
 omits drives and other control equipment with a warning, and it does not
 support port networks or effective terms. The API reference lists the
-[device mappings](../api.md) in `quchip.interop.scqubits.devices`.
+{doc}`device mappings <../api>` in `quchip.interop.scqubits.devices`.

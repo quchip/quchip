@@ -3,8 +3,10 @@
 Every figure is drawn once with the light quchip tokens as ``<name>.svg``.
 This script writes ``<name>-dark.svg`` by swapping tokens, ``<name>.pdf``
 from the light SVG (glyphs are already outlines, so the PDF stays small), and
-``<name>-dark.png`` beside any light ``<name>.png`` (the README pair). Colors
-outside the token map are reported so figures stay on the palette.
+``<name>-dark.png`` beside any light ``<name>.png`` (the README pair). The
+README links to copies of each pair in ``docs/_static/readme``, and the script
+refreshes them. Colors outside the token map are reported so figures stay on
+the palette.
 
 ``rsvg-convert`` output differs between runs, so the script renders a PDF or
 dark PNG only when its light SVG differs from ``HEAD``, is untracked, or has
@@ -26,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGES = ROOT / "docs" / "images"
+README_IMAGES = ROOT / "docs" / "_static" / "readme"
 
 # light token -> dark token (quchip identity, tokens/quchip.tokens.json)
 TOKENS = {
@@ -99,6 +102,17 @@ def render_png(svg: Path, reference_png: Path) -> Path | None:
     return target
 
 
+def publish_readme_pair(light_png: Path) -> list[str]:
+    """Copy a README pair to ``docs/_static/readme`` where it differs, and return the copied names."""
+    copied = []
+    for source in (light_png, light_png.with_name(f"{light_png.stem}-dark.png")):
+        target = README_IMAGES / source.name
+        if source.exists() and (not target.exists() or target.read_bytes() != source.read_bytes()):
+            shutil.copyfile(source, target)
+            copied.append(target.name)
+    return copied
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stems", nargs="*", help="figure stems (default: every light SVG)")
@@ -130,6 +144,9 @@ def main() -> int:
             else:
                 png = render_png(target, light_png)
                 line += f" + {png.name}" if png else " (rsvg-convert missing: no dark PNG)"
+            copied = publish_readme_pair(light_png)
+            if copied:
+                line += f" (README copies: {', '.join(copied)})"
         print(line)
         if unknown:
             print(f"  off-palette colors: {', '.join(sorted(unknown))}", file=sys.stderr)

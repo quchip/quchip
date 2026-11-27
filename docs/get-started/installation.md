@@ -21,7 +21,7 @@ python -m pip install 'quchip[scqubits]'  # scqubits interoperability
 ```
 
 You can combine extras, for example `quchip[dynamiqs,viz]`. See
-{doc}`backend and solver options <../guides/choosing-a-backend>` for numerical settings.
+{doc}`backend and solver options <../reference/backends-and-solvers>` for numerical settings.
 
 ## Check the installation
 
@@ -32,4 +32,4 @@ python -c "import quchip; print(quchip.__version__)"
 quchip is a 0.x project, so pin the version for reproducible
 calculations, for example `quchip==0.4.0`.
 
-Next, {doc}`declare your first chip <../guides/defining-and-inspecting-a-chip>`.
+Next, {doc}`define your first chip <first-chip>`.

@@ -1,10 +1,10 @@
 # Your first simulation
 
 How much population does a Gaussian pulse leave in a transmon's first excited
-state? Declare a four-level transmon, wire a charge drive, and apply a 20 ns pulse.
+state? Define a four-level transmon, wire a charge drive, and apply a 20 ns pulse.
 Frequencies are in GHz and times are in ns.
 
-## Declare the chip and drive
+## Define the chip and drive
 
 ```python
 import numpy as np
@@ -16,8 +16,8 @@ line = ChargeDrive(q, label="xy")
 chip.wire(line)
 ```
 
-The model uses a rotating frame and the rotating-wave approximation. It
-declares no loss channels, so this calculation describes coherent
+The model uses a rotating frame and the rotating-wave approximation, and it
+defines no loss channels, so this calculation describes coherent
 evolution.
 
 ## Schedule and simulate
@@ -36,6 +36,8 @@ result = sequence.simulate(
 print(f"Final excited-state population: {result.population(q, 1)[-1]:.3f}")
 ```
 
+Output:
+
 ```text
 Final excited-state population: 0.745
 ```
@@ -47,5 +49,5 @@ Read the |2⟩ population with `result.population(q, 2)`.
 For this pulse, five levels instead of four change the final |1⟩ population by
 less than one part in a million.
 
-Continue with {doc}`pulses, leakage, and readout <../guides/dynamics-pulses-and-readout>`
+Continue with {doc}`pulses, leakage, and readout <../guides/pulses-and-readout>`
 to compare short and long pulses on a coupled transmon–resonator model.

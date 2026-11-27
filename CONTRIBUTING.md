@@ -15,7 +15,7 @@ python -m pip install --upgrade pip
 python -m pip install -e '.[dev,test,dynamiqs]'
 ```
 
-QuTiP is the default backend. The `dynamiqs` extra lets you run the JAX-native solver, gradient, and batching tests.
+QuTiP is the default backend, and the `dynamiqs` extra lets you run the JAX-native solver, gradient, and batching tests.
 
 ## Tests
 
@@ -34,7 +34,7 @@ python -m pytest -m unit
 python -m pytest -m e2e
 ```
 
-`unit` checks small deterministic components and API contracts. `e2e` covers
+`unit` checks small deterministic components and the guarantees of the API. `e2e` covers
 integration workflows and physics, including every physics sentinel. On a
 developer machine, aim for under 30 seconds for units and 3–5 minutes for
 E2E, as runtime targets rather than guarantees across machines or optional
@@ -50,23 +50,35 @@ python -m pytest -m validation --durations=20
 python -m pytest
 ```
 
+The `release` suite executes each example notebook again and compares its
+textual outputs with the committed ones. It takes several minutes, and
+neither CI nor `python -m pytest` runs it. Run it before a release, as
+[Releases](#releases) describes:
+
+```bash
+python -m pytest -m release --durations=10
+```
+
 Validation runs in one pytest process, even in pre-merge CI. Measure
-changes with this sequential command, because parallel wall time does not
+changes with the sequential validation command above, because parallel wall time does not
 show that a suite is cheaper. Five minutes is the target, not a measured CI
 guarantee. When you decrease repeated setup or solver work, keep
 independent numerical references, failure paths, and statistical sample
 sizes.
 
-Each collected test belongs to exactly one of these suites. Mark small test modules with
-`pytestmark = pytest.mark.unit` and expensive functions with `@pytest.mark.validation`. For an
-expensive parameter value, use `pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests
-go into `e2e`, so new tests run in PR CI by default. Conflicting suite markers cause collection to
-fail. Keep meaningful cheap checks. Select validation candidates by cost and coverage overlap, but
-keep representative numerical oracles in E2E. Coverage overlap alone does not show that two tests
-check the same assertion.
+Each collected test belongs to exactly one of these suites. Mark small test
+modules with `pytestmark = pytest.mark.unit`, expensive functions with
+`@pytest.mark.validation`, and checks that run only before a release with
+`@pytest.mark.release`. For an expensive parameter value, use
+`pytest.param(value, marks=pytest.mark.validation)`. Unmarked tests go into
+`e2e`, so new tests run in PR CI by default. Conflicting suite markers cause
+collection to fail. Keep meaningful cheap checks. Select validation
+candidates by cost and coverage overlap, but keep representative numerical
+oracles in E2E. Coverage overlap alone does not show that two tests check the
+same assertion.
 
 The location markers `core`, `physics_sentinel`, `extended`, and `examples`
-stay available for focused work. They carry no runtime budget.
+stay available for focused work, but they carry no runtime budget.
 
 ### CI and merging
 
@@ -92,14 +104,14 @@ examples (including Markdown), tooling, and repository rules must use test lanes
 If the change list is unreadable, classification fails.
 
 The required `pre-merge full suite` check skips validation for drafts and
-lightweight changes. It keeps its name for branch protection. Manual dispatch
+lightweight changes, and it keeps its name for branch protection. Manual dispatch
 always runs validation on the selected ref, but scheduled dependency checks
 do not.
 
 The `main` ruleset requires the PR branch to include the current `main`
 before merging. Its configuration is recorded in
 [`.github/rulesets/main.json`](.github/rulesets/main.json). A change to this
-file does not update GitHub automatically. An administrator must apply it to
+file does not update GitHub automatically, and an administrator must apply it to
 ruleset `21738854` before merging the workflow changes that remove
 post-merge test runs. Existing PRs keep the required check names.
 
@@ -125,7 +137,7 @@ Ruff uses a 120-character line limit. Public API docstrings use NumPy-style sect
 Document every parameter of public constructors, functions, and methods,
 including keyword-only and inherited arguments. Where applicable, give accepted
 forms, defaults, units, allowed choices or ranges, and the meaning of `None`.
-Expand forwarded options or link to their precise contract. Keep descriptions
+Expand forwarded options or link to the documentation that defines them. Keep descriptions
 short. Put equations and derivations in `Notes`, with primary physics
 references. Describe result attributes and return values with shapes, axis
 order, and units.
@@ -145,7 +157,7 @@ The [guides](docs/guides/index.md) and [cookbook](docs/cookbook.md) explain how 
 
 Readable Jupytext Markdown is the canonical source. Commit its executed `.ipynb` partner with the `python3` kernel, identical code cells, and inspected outputs. Use standard fenced Python cells, not percent-format scripts.
 
-Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`. Include the canonical Markdown from its page under `docs/guides/`. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette.
+Notebook outputs stay in the executed `.ipynb`. Save only figures selected for the website under `docs/images/`, and only when that folder exists, so that a downloaded notebook also runs outside the repository. Include the canonical Markdown from its page under `docs/guides/` or `docs/studies/`, and link the notebook there. Figures load `docs/_static/quchip.mplstyle` and save a single light `.svg`. Then `python3 tools/theme_figures.py` derives the `-dark.svg`, `.pdf`, and README `-dark.png` variants and rejects colors outside the palette. It also copies each README pair to `docs/_static/readme/`, where the README links to it. `python3 tools/overview_figure.py` redraws the overview figure of the README and the documentation front page from the models of three guides and the fluxonium study.
 
 From the repository root, replace `<name>` with the example stem and run:
 
@@ -159,7 +171,11 @@ jupytext --diff --diff-format md examples/<name>.ipynb examples/<name>.md
 jupytext --to md --test-strict examples/<name>.ipynb
 ```
 
-The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook. Setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
+The diff must be empty and the strict round trip must pass. Before you commit, inspect the executed notebook: setup cells stay silent, stdout contains only intended receipts, and each intended figure appears once. Run the focused example test and the project checks above.
+
+Re-execute each notebook whose printed results your change alters. The `validation` suite executes the guide notebooks again and compares their textual outputs with the committed ones. The study notebooks download data or run long solves, so the `release` suite executes them before each release.
+
+Guides without a notebook are Markdown pages under `docs/` that show each printed result in an `Output:` block. After a change, refresh their output and figures with `python3 tools/execute_markdown.py docs/guides/<name>.md`. The `validation` suite executes these pages again and compares the output.
 
 ## Physics conventions
 
@@ -167,14 +183,14 @@ Before you change Hamiltonians, frames, approximations, observables, dissipation
 
 - Use ordinary GHz for frequencies and energies, ns for time, and mK for temperature.
 - Keep traced paths compatible with JAX. Do not call `float()`, `int()`, or `bool()` on traced values, and do not branch on traced values with Python. Use `jax.numpy` and JAX control flow.
-- State approximations, omitted terms, and validity regimes through the model's declared approximation and `physics_notes()`.
+- State approximations, omitted terms, and validity regimes through the approximation that the model defines and through `physics_notes()`.
 - Use derived tolerances based on an analytic limit, truncation error, solver convergence, an independent calculation, or a cited reference. State the basis next to the assertion. Never tune a tolerance only to make a test pass.
 
 ## Pull requests
 
 Keep pull requests small and focused. Explain the physical or user-visible change, include tests for changed behavior, and update the applicable documentation.
 
-Before you start a large change or add a device, coupling, drive, envelope, or noise model, open an issue. Include the model Hamiltonian, assumptions, intended use, and a reference when available. This lets contributors agree on the scope before implementation.
+Before you start a large change or add a device, coupling, drive, envelope, or noise model, open an issue. Include the model Hamiltonian, assumptions, intended use, and a reference when available, so that contributors can agree on the scope before implementation.
 
 ## Releases
 
@@ -210,10 +226,14 @@ flag numerical consequences. Deprecations identify the replacement and the
 planned removal release. Keep migration steps in the release entry, unless a
 longer guide is necessary.
 
+Before you mark the release PR ready for review, run `python -m pytest -m release`.
+If a notebook fails, find the change that moved its output and confirm that it
+is intended, then re-execute and commit the notebook.
+
 Before you tag, review the full change set since the previous published tag.
 Move `Unreleased` into the dated entry, and run
 `python tools/release_notes.py <version>` to inspect the release body. The docs
-include the changelog. After the tag workflow publishes to PyPI, it uses that
+include the changelog, and after the tag workflow publishes to PyPI it uses the
 same section for GitHub. Do not keep separate copies.
 
 For editorial corrections after publication, merge the changelog update and
